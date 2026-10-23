@@ -526,6 +526,7 @@ function playSpeak(){
       document.getElementById('skip').onclick=function(){ stopRec(); q.ok=false; q.fallback=true; q._done=true; goNext(); };
       var micBtn=document.getElementById('mic');
       micBtn.onclick=function(){ doRec(micBtn,q,w); };
+      if(!MIC_STREAM){ micBtn.textContent='🎤 按我開始念（第一次會問允許）'; }
       /* 權限早已拿到 → 本題自動開始錄音，達成「只按一次、連續錄」 */
       if(MIC_STREAM){
         setTimeout(function(){
