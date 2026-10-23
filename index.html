@@ -197,6 +197,24 @@ var UID = (function(){
 })();
 var SYNC = { ok:false, msg:'還沒同步', time:'' };
 
+/* 進度保存：每完成一組把「名字＋成績」存進手機 → 關掉再開可以接著補完 */
+function saveProgress(){
+  try{
+    if(S.name) localStorage.setItem('WL_PROGRESS', JSON.stringify({name:S.name, done:S.done, t:Date.now()}));
+  }catch(e){}
+}
+function loadProgress(){
+  try{
+    var raw = localStorage.getItem('WL_PROGRESS');
+    if(!raw) return false;
+    var p = JSON.parse(raw);
+    if(p && p.name && p.done && Object.keys(p.done).length){
+      S.name = p.name; S.done = p.done; return true;
+    }
+  }catch(e){}
+  return false;
+}
+
 function buildPayload(){
   var cells={}, total=0, cnt=0, wrong=[], firstTotal=0;
   for(var n=1;n<=3;n++) for(var g=1;g<=4;g++){
@@ -364,7 +382,7 @@ function menu(){
       }
       document.getElementById('rep').onclick=report;
       document.getElementById('reset').onclick=function(){
-        if(confirm('要放棄這次的成績，重新開始嗎？')){ S.done={}; SYNC={ok:false,msg:'還沒同步',time:''}; home(); }
+        if(confirm('要放棄這次的成績，重新開始嗎？')){ S.done={}; SYNC={ok:false,msg:'還沒同步',time:''}; try{ localStorage.removeItem('WL_PROGRESS'); }catch(e){} home(); }
       };
     }
   );
@@ -485,7 +503,7 @@ function playSpell(){
     '<div class="card">'+progressHTML()+
       '<div class="zhbig" style="font-size:30px">「'+esc(w.c)+'」</div>'+
       '<div style="text-align:center"><span style="font-size:34px">✏️</span></div>'+
-      '<input class="spell" id="sp" placeholder="type here..." autocomplete="off" autocapitalize="off" spellcheck="false">'+
+      '<input class="spell" id="sp" placeholder="type here..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text">'+
       '<div style="text-align:center">'+
         '<button class="iconbtn" id="hear">🔊 聽一次</button>'+
         '<button class="iconbtn" id="hint">🔤 顯示提示</button>'+
@@ -666,6 +684,7 @@ function groupResult(){
   var k=key();
   var prev=S.done[k];
   if(!prev || score>prev.score) S.done[k]={score:score, firstTry:first, details:g.map(function(q){ return {w:q.w, ok:q.ok, firstTry:q.firstTry}; })};
+  saveProgress();
   if(score>=8) sndWin();
   var rows=g.map(function(q,j){
     return '<div style="display:flex;justify-content:space-between;align-items:center;background:'+(q.ok?'#f2fff0':'#fff5f5')+
@@ -761,7 +780,8 @@ function report(){
 
 /* ================= 啟動 ================= */
 if(speechSynthesis) speechSynthesis.getVoices();
-home();
+/* 手機裡有存過進度 → 直接回到上次的進度接著玩；沒有 → 顯示首頁輸入名字 */
+if(loadProgress()){ menu(); } else { home(); }
 </script>
 </body>
 </html>
