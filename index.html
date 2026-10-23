@@ -147,7 +147,6 @@ var S = {
   done:{}          /* 'secN_group' -> {score, firstTry, details:[...]} */
 };
 var app = document.getElementById('app');
-var saved = false;
 
 /* 麥克風：整場只授權一次（保留 stream），之後每題直接錄、不再跳允許 */
 var MIC_STREAM = null;
@@ -177,14 +176,53 @@ function micFailUI(fb,btn,q){
 
 /* 後端通訊：遊戲頁放 GitHub Pages，成績 POST 回 GAS 後端（CORS: * 已實測） */
 var SAVE_URL = 'https://script.google.com/macros/s/AKfycbwlyA5ELgWopHHYuEZzzPk2C5hEcdf5QZnHWDLJ2kcyKV6GvTTZVIydwBYOCUm_xFH8HQ/exec';
-function sendScore(name, payload, cb){
+function sendScore(name, payload, uid, cb){
   fetch(SAVE_URL, {
     method:'POST',
     headers:{'Content-Type':'text/plain;charset=utf-8'},
-    body: JSON.stringify({action:'save', name:name, payload:payload})
+    body: JSON.stringify({action:'save', name:name, uid:uid||'', payload:payload})
   }).then(function(r){ return r.json(); })
     .then(function(j){ cb(true, j); })
     .catch(function(){ cb(false, null); });
+}
+
+/* ===== 每組完成自動同步 =====
+ * 同一台裝置 = 表裡同一列（UID 存在 localStorage，英文名字只當顯示） */
+var UID = (function(){
+  try{
+    var v = localStorage.getItem('WL_UID');
+    if(!v){ v = 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); localStorage.setItem('WL_UID', v); }
+    return v;
+  }catch(e){ return 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
+})();
+var SYNC = { ok:false, msg:'還沒同步', time:'' };
+
+function buildPayload(){
+  var cells={}, total=0, cnt=0, wrong=[], firstTotal=0;
+  for(var n=1;n<=3;n++) for(var g=1;g<=4;g++){
+    var r=S.done['s'+n+'_'+g];
+    if(r){ cells['s'+n+'_'+g]=r.score; total+=r.score; cnt++; firstTotal+=r.firstTry; }
+  }
+  var pct = cnt? Math.round(total/(cnt*10)*100):0;
+  for(var k in S.done){
+    S.done[k].details.forEach(function(dt){
+      if(!dt.ok) wrong.push(WORDS[dt.w].e+'（'+WORDS[dt.w].c+'）');
+    });
+  }
+  var comment = pct>=95?'單字王 👑 超級棒':(pct>=85?'超級棒 ⭐':(pct>=70?'很不錯 👍':(pct>=50?'繼續加油 💪':'多多練習 🌱')));
+  return { cells:cells, total:total, cnt:cnt, firstTotal:firstTotal, pct:pct, comment:comment, wrongArr:wrong,
+    payload:{ cells:cells, total:total, pct:pct, comment:comment, wrong:wrong.slice(0,20).join('；') } };
+}
+
+function syncScore(cb){
+  var d = buildPayload();
+  if(!d.cnt){ if(cb) cb(false); return; }
+  sendScore(S.name, d.payload, UID, function(ok,res){
+    SYNC.ok = !!(ok && res && res.ok);
+    SYNC.msg = SYNC.ok ? '成績已存入老師的表格 ✓' : ((ok && res && res.msg) ? res.msg : '同步失敗，請檢查網路');
+    SYNC.time = new Date().toTimeString().slice(0,5);
+    if(cb) cb(SYNC.ok);
+  });
 }
 
 /* ================= 小工具 ================= */
@@ -326,7 +364,7 @@ function menu(){
       }
       document.getElementById('rep').onclick=report;
       document.getElementById('reset').onclick=function(){
-        if(confirm('要放棄這次的成績，重新開始嗎？')){ S.done={}; saved=false; home(); }
+        if(confirm('要放棄這次的成績，重新開始嗎？')){ S.done={}; SYNC={ok:false,msg:'還沒同步',time:''}; home(); }
       };
     }
   );
@@ -642,7 +680,8 @@ function groupResult(){
       '<div class="title" style="font-size:26px">'+S.sec.name+'第'+(S.gid+1)+'組 完成！</div>'+
       '<p class="sub">'+msg+'</p>'+
       '<div style="font-size:46px;font-weight:900;color:#ff6fae">'+score+' <span style="font-size:22px;color:#a58cc7">/ 10</span></div>'+
-      '<p class="mini">🌟 一次答對 '+first+' 題</p><div class="divider"></div>'+rows+
+      '<p class="mini">🌟 一次答對 '+first+' 題</p>'+
+      '<p class="mini" id="gsync">☁️ 成績同步中…</p><div class="divider"></div>'+rows+
       '<button class="bigbtn" id="mg">繼續挑戰（回'+S.sec.name+'選組）</button>'+
       '<button class="bigbtn gray" id="mn">🏠 回主選單</button>'+
       (allDone()?'<button class="bigbtn green" id="rv">🎉 看我的總成績單</button>':'')+
@@ -652,25 +691,19 @@ function groupResult(){
       document.getElementById('mn').onclick=menu;
       var rv=document.getElementById('rv'); if(rv) rv.onclick=report;
       confetti();
+      /* 每組完成 → 自動存進老師的表格 */
+      syncScore(function(ok){
+        var el=document.getElementById('gsync');
+        if(el) el.textContent = ok ? '☁️ 成績已自動存入老師的表格 ✓' : '⚠️ 同步失敗（'+SYNC.msg+'），到成績單可再按同步';
+      });
     }
   );
 }
 
 /* ---------- 總成績單 ---------- */
 function report(){
-  var cells={}, total=0, cnt=0, wrong=[], firstTotal=0;
-  for(var n=1;n<=3;n++) for(var g=1;g<=4;g++){
-    var r=S.done['s'+n+'_'+g];
-    if(r){ cells['s'+n+'_'+g]=r.score; total+=r.score; cnt++; firstTotal+=r.firstTry; }
-  }
-  var maxScore=cnt*10, pct= cnt? Math.round(total/maxScore*100):0;
-  var miss=[];
-  for(var key2 in S.done){
-    S.done[key2].details.forEach(function(d){
-      if(!d.ok) wrong.push(WORDS[d.w].e+'（'+WORDS[d.w].c+'）');
-    });
-  }
-  var comment = pct>=95?'單字王 👑 超級棒':(pct>=85?'超級棒 ⭐':(pct>=70?'很不錯 👍':(pct>=50?'繼續加油 💪':'多多練習 🌱')));
+  var d = buildPayload();
+  var cells=d.cells, total=d.total, cnt=d.cnt, wrong=d.wrongArr, firstTotal=d.firstTotal, pct=d.pct, comment=d.comment;
   var table='<table class="score"><tr><th>關卡</th>';
   for(var c=1;c<=4;c++) table+='<th>第'+c+'組</th>';
   table+='<th>小計</th></tr>';
@@ -705,27 +738,21 @@ function report(){
       (wrong.length? '<div class="divider"></div><b style="color:#d84f92">📕 需要再練習的單字：</b><div class="wronglist">'+
         wrong.map(function(t){ return '・'+esc(t); }).join('<br>')+'</div>':'')+
       '<div class="divider"></div>'+
-      (saved? '<p class="sub">✅ 已傳送給老師</p>' :
-        (cnt? '<button class="bigbtn green" id="send">📤 把成績傳送給老師</button><p class="mini" id="sendmsg"></p>':''))+
+      (cnt? '<p class="sub" id="syncstate">'+(SYNC.ok?'✅ '+esc(SYNC.msg)+(SYNC.time?'（'+SYNC.time+'）':''):'⚠️ '+esc(SYNC.msg))+'</p>'+
+            '<button class="bigbtn green" id="send">☁️ 立即同步給老師</button><p class="mini" id="sendmsg"></p>':'')+
       '<button class="bigbtn" id="mn">🏠 回主選單繼續挑戰</button>'+
     '</div>',
     function(){
       document.getElementById('mn').onclick=menu;
       var sb=document.getElementById('send');
       if(sb) sb.onclick=function(){
-        var payload={cells:cells, total:total, pct:pct, comment:comment, wrong:wrong.slice(0,20).join('；')};
-        sb.disabled=true; sb.textContent='傳送中...';
-        sendScore(S.name, payload, function(ok,res){
-          if(ok && res && res.ok){
-            saved=true; sndWin();
-            document.getElementById('sendmsg').textContent='✅ '+res.msg;
-          }else if(ok){
-            document.getElementById('sendmsg').textContent='⚠️ '+(res&&res.msg||'送出失敗')+'（可以截圖給老師）';
-            sb.disabled=false; sb.textContent='📤 把成績傳送給老師';
-          }else{
-            document.getElementById('sendmsg').textContent='⚠️ 送出失敗，請檢查網路（可截圖給老師）';
-            sb.disabled=false; sb.textContent='📤 把成績傳送給老師';
-          }
+        sb.disabled=true; sb.textContent='同步中...';
+        document.getElementById('sendmsg').textContent='';
+        syncScore(function(ok){
+          var st=document.getElementById('syncstate');
+          if(st) st.textContent = ok ? '✅ '+SYNC.msg+(SYNC.time?'（'+SYNC.time+'）':'') : '⚠️ '+SYNC.msg;
+          if(ok) sndWin();
+          sb.disabled=false; sb.textContent='☁️ 立即同步給老師';
         });
       };
     }
